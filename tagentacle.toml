@@ -1,0 +1,8 @@
+[package]
+name = "python-sdk-agent"
+version = "0.1.0"
+type = "library"
+description = "Agent SDK — composable agent building blocks"
+
+[dependencies]
+python-sdk-core = { git = "https://github.com/Tagentacle/python-sdk-core.git" }
