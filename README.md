@@ -8,31 +8,36 @@ This package provides **mechanisms** (not policies) for building agent nodes:
 
 | Component | Description |
 |-----------|-------------|
-| `MessageQueue` | Message buffer between inference cycles (~30 lines) |
-| `InferenceMux` | Controls when to infer: IDLE/BUSY state machine + priority queue (~50 lines) |
-| `ContextFactory` | `mailbox + messages + tools → LLMRequest` pure function (~40 lines) |
+| `Inbox` | Agent-local message buffer with per-topic attention levels (~30 lines) |
+| `InferenceMux` | Controls when to infer: IDLE/BUSY state machine + followup queue (~50 lines) |
+
+> **Removed**: `MessageQueue` (bus callback → Inbox replaces it), `ContextFactory` (context assembly is policy, not mechanism — stays in example-agent)
 
 ### Design Principles
 
 - **All components are optional** — pick what you need
-- **No topic names hardcoded** — SDK provides event hooks, topic binding is in bringup config
-- **No policies** — InferenceMux emits events (`on_inference_start`, `on_tool_call`, `on_complete`), it doesn't decide where to publish them
-- **< 500 lines total** — if it exceeds this, policies are leaking in
+- **No topic names hardcoded** — SDK doesn’t know any specific topic
+- **No policies** — Inbox buffers, InferenceMux triggers; example-agent decides what to do
+- **< 100 lines total** — if it exceeds this, policies are leaking in
+- **Attention levels are a mixin** — remove classification and Inbox degrades to a plain list buffer
 
-### Event Hooks (Q13)
+### Two-Plane Model (Q14 revised)
 
-```python
-class InferenceMux:
-    # Events — consumers decide what to do with them
-    on_inference_start: Callable
-    on_tool_call: Callable
-    on_inference_complete: Callable
+```
+Agent = LifecycleNode (bus data plane) + Multi-MCP Client (tool plane)
 
-# AgentNode (example-agent, NOT this SDK) decides:
-async def handle_tool_call(event):
-    topic = config["trace_topic"]  # from bringup config
-    if topic:
-        await node.publish(topic, event.to_dict())
+Bus (data):  subscribe topics, call services, publish results
+MCP (tools): connect to shell-server, weather-server, etc.
+```
+
+### Message Flow
+
+```
+Bus topic callback → Inbox.push(topic, msg)
+                       ├─ mode=followup → buffer + signal InferenceMux
+                       └─ mode=collect  → buffer only (silent)
+
+InferenceMux.trigger() → _agentic_loop() reads Inbox.drain()
 ```
 
 ## Architecture Context
@@ -40,7 +45,7 @@ async def handle_tool_call(event):
 ```
 python-sdk-core:    Node, LifecycleNode (kernel-level)
 python-sdk-mcp:     MCPServerComponent, TagentacleMCPServer (MCP layer)
-python-sdk-agent:   MessageQueue, InferenceMux, ContextFactory (agent building blocks)  ← this
+python-sdk-agent:   Inbox, InferenceMux (agent building blocks)  ← this
 python-sdk-tacl:    TACLAuthority, TACLMiddleware, auth (access control)
 
 example-agent:      AgentNode = LifecycleNode + agent SDK components + policy choices
